@@ -1,53 +1,96 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Keyboard + mouse input for Solara City.
+// WASD/arrows move, Shift runs, E enters/exits a car (edge-triggered),
+// mouse drag orbits the third-person camera, wheel zooms.
+// No pointer lock: drag-orbit works in a plain browser tab and in capture.
+import { CAM_MIN_DIST, CAM_MAX_DIST, CAM_DEFAULT_DIST } from './config.js';
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
+export class Input {
+  constructor(canvas) {
+    this.keys = new Set();
+    this.yaw = Math.PI; // camera looks north (-z) by default
+    this.pitch = 0.32;
+    this.distance = CAM_DEFAULT_DIST;
+    this._ePressed = false;
+    this._dragging = false;
+    this._lastX = 0;
+    this._lastY = 0;
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+    window.addEventListener('keydown', (event) => {
+      if (event.code === 'KeyE' && !event.repeat) this._ePressed = true;
+      this.keys.add(event.code);
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
+        event.preventDefault();
+      }
+    });
+    window.addEventListener('keyup', (event) => {
+      this.keys.delete(event.code);
+    });
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+    });
 
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
+    canvas.addEventListener('mousedown', (event) => {
+      this._dragging = true;
+      this._lastX = event.clientX;
+      this._lastY = event.clientY;
+    });
+    window.addEventListener('mouseup', () => {
+      this._dragging = false;
+    });
+    window.addEventListener('mousemove', (event) => {
+      if (!this._dragging) return;
+      const dx = event.clientX - this._lastX;
+      const dy = event.clientY - this._lastY;
+      this._lastX = event.clientX;
+      this._lastY = event.clientY;
+      this.yaw -= dx * 0.005;
+      this.pitch += dy * 0.004;
+      this.pitch = Math.max(-0.1, Math.min(1.1, this.pitch));
+    });
+    canvas.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      this.distance += Math.sign(event.deltaY) * 1.5;
+      this.distance = Math.max(CAM_MIN_DIST, Math.min(CAM_MAX_DIST, this.distance));
+    }, { passive: false });
+  }
 
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
+  // -1..1 forward (W/up positive), -1..1 strafe (D/right positive).
+  get moveForward() {
+    let f = 0;
+    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) f += 1;
+    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) f -= 1;
+    return f;
+  }
 
-  return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-  };
+  get moveStrafe() {
+    let s = 0;
+    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) s += 1;
+    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) s -= 1;
+    return s;
+  }
+
+  get running() {
+    return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+  }
+
+  // True once per E keypress; calling it consumes the press.
+  consumeInteract() {
+    const pressed = this._ePressed;
+    this._ePressed = false;
+    return pressed;
+  }
+
+  // Synthetic drive for the shot autopilot: pretend keys are held.
+  setSynthetic(forward, strafe, running) {
+    this.keys.delete('KeyW');
+    this.keys.delete('KeyS');
+    this.keys.delete('KeyA');
+    this.keys.delete('KeyD');
+    if (forward > 0) this.keys.add('KeyW');
+    if (forward < 0) this.keys.add('KeyS');
+    if (strafe > 0) this.keys.add('KeyD');
+    if (strafe < 0) this.keys.add('KeyA');
+    if (running) this.keys.add('ShiftLeft');
+    else this.keys.delete('ShiftLeft');
+  }
 }
