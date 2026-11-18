@@ -116,5 +116,18 @@ export const HEALTH_HIT_BY_CAR = 10; // traffic car hits Raka on foot
 export const HEALTH_HARD_CRASH = 5; // player car hits a wall hard
 export const HEALTH_REGEN_PER_SEC = 2;
 
+// ---- Block C: mission M1 "Kurir Panas" (F9), save/load (F13). ----
+// Pickup and delivery are fixed road intersections, so the job is the
+// same every run (seeded determinism is preserved: no RNG here).
+export const MISSION_PICKUP = { x: -102, z: -102, name: 'Palm Ave & 3rd St' };
+export const MISSION_DELIVERY = { x: 138, z: 138, name: 'Kantor Coral' };
+export const MISSION_PICKUP_RADIUS = 8; // press E inside this to take the package
+export const MISSION_DELIVER_RADIUS = 10; // press E inside this, from the car, to deliver
+export const MISSION_TIME_LIMIT = 150; // seconds to deliver once carrying
+export const MISSION_REWARD = 150; // paid exactly once, on delivery
+export const MISSION_RETRY_RESPAWN = { x: -102, z: -96 }; // 6 m south of the pickup
+export const SAVE_KEY = 'solara-city-save-v1';
+export const SAVE_AUTOSAVE_STEPS = 300; // autosave every 5 sim-seconds
+
 // Fixed seeds keep every shot and every fresh world identical.
 export const DEFAULT_SEED = 1;

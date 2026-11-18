@@ -30,6 +30,31 @@
     bottom: 64px; left: 50%; transform: translateX(-50%);
     font-size: 16px; font-weight: 700; color: #ffd75e;
   }
+  #hud-mission { top: 52px; left: 12px; font-size: 14px; font-weight: 700; color: #ffd75e; }
+  #hud-banner {
+    top: 92px; left: 50%; transform: translateX(-50%);
+    font-size: 18px; font-weight: 800; color: #7ee2a0;
+  }
+  #pause, #gameover {
+    position: fixed; inset: 0; z-index: 10; display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; font-family: system-ui, sans-serif; text-align: center;
+    background: rgba(10, 20, 30, 0.72);
+  }
+  #pause.hidden, #gameover.hidden { display: none; }
+  #pause h2, #gameover h2 { font-size: 44px; margin: 0; letter-spacing: 4px; }
+  #pause p, #gameover p { font-size: 17px; margin: 12px 0 0; }
+  #gameover-reason { font-size: 22px; font-weight: 700; color: #ffd75e; margin-top: 14px; }
+  .overlay-btn {
+    margin-top: 26px; padding: 12px 28px; font-size: 17px; font-weight: 700;
+    font-family: system-ui, sans-serif; color: #0a1016; background: #ffd75e;
+    border: none; border-radius: 8px; cursor: pointer;
+  }
+  .overlay-btn.secondary { background: transparent; color: #fff; border: 2px solid rgba(255, 255, 255, 0.6); }
+  #title-continue {
+    font-size: 19px; font-weight: 700; color: #7ee2a0; margin-top: 16px; cursor: pointer;
+  }
+  #title-continue.hidden { display: none; }
   #minimap {
     position: fixed; right: 12px; bottom: 12px; z-index: 5;
     border: 2px solid rgba(255, 255, 255, 0.55); border-radius: 8px;
@@ -56,14 +81,28 @@
 <div id="hud-wanted" class="panel"></div>
 <div id="hud-cash" class="panel">$120</div>
 <div id="hud-health" class="panel">HP <div id="hud-health-track"><div id="hud-health-bar"></div></div></div>
-<div id="hud-hint" class="panel">WASD move &nbsp;·&nbsp; Shift run &nbsp;·&nbsp; E enter / exit car &nbsp;·&nbsp; drag mouse to orbit</div>
+<div id="hud-hint" class="panel">WASD move &nbsp;·&nbsp; Shift run &nbsp;·&nbsp; E enter / exit car &nbsp;·&nbsp; Esc pause &nbsp;·&nbsp; drag mouse to orbit</div>
 <div id="hud-prompt" class="panel"></div>
+<div id="hud-mission" class="panel"></div>
+<div id="hud-banner" class="panel"></div>
 <canvas id="minimap" width="180" height="180"></canvas>
 <div id="title">
   <h1>SOLARA CITY</h1>
   <p>Raka the courier. One hot package. A whole city watching.</p>
   <div class="controls">WASD — move &nbsp;·&nbsp; SHIFT — run &nbsp;·&nbsp; E — enter / exit car &nbsp;·&nbsp; MOUSE DRAG — camera</div>
+  <div id="title-continue" class="hidden">Continue — lanjutkan misi</div>
   <div class="play">Click or press Enter to play</div>
+</div>
+<div id="pause" class="hidden">
+  <h2>PAUSED</h2>
+  <p>Tekan Esc / P atau klik untuk lanjut</p>
+</div>
+<div id="gameover" class="hidden">
+  <h2>MISI GAGAL</h2>
+  <div id="gameover-reason"></div>
+  <p>Paketnya hilang. Coba lagi dari dekat titik ambil.</p>
+  <button id="gameover-retry" class="overlay-btn">Coba Lagi</button>
+  <button id="gameover-title" class="overlay-btn secondary">Kembali ke Title</button>
 </div>
 <script type="module" src="./src/main.js"></script>
 </body>

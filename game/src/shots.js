@@ -45,10 +45,148 @@ export function runShot(game, shotName) {
     runStreetShot(game, 360);
   } else if (shotName === 'chase') {
     runChaseShot(game);
+  } else if (shotName === 'mission') {
+    runMissionShot(game);
+  } else if (shotName === 'city') {
+    runCityShot(game);
   } else {
     throw new Error(`unknown shot: ${shotName}`);
   }
   window.__shotReady = true;
+}
+
+// Mission shot: a real M1 run — steal the Sirocco, drive to the pickup,
+// take the package with E, then drive south toward Kantor Coral. The
+// frame catches Raka mid-delivery with the objective and the timer in
+// the HUD and the delivery marker ahead. Every step runs the real rules.
+function runMissionShot(game) {
+  const { player, input, hud, lights, camera, renderer, scene, traffic, police, mission } = game;
+  const avenueX = 42;
+
+  const stealCar = player.cars.find((c) => c.heading === Math.PI && Math.abs(c.x - (avenueX + 3.8)) < 1);
+  if (!stealCar) throw new Error('mission shot: no north-facing parked car on the avenue');
+  player.pos.set(stealCar.x, 0, stealCar.z + 2.0);
+  player.heading = Math.PI;
+  player.mode = 'foot';
+  player.speed = 0;
+  player.figure.visible = true;
+  input.yaw = 0.6;
+  input.pitch = 0.4;
+  input.distance = 12;
+
+  input._ePressed = true;
+  game.stepWorld(STEP);
+  if (player.mode !== 'car') throw new Error('mission shot: steal failed');
+
+  const wrapAngle = (a) => {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  };
+  // Waypoint driver with the chase shot's traffic check: coast behind a
+  // same-direction car ahead instead of rear-ending it. Sharp turns cut
+  // the throttle only while the car is already moving — from a
+  // standstill the car cannot steer at all.
+  const driveTo = (waypoints, maxSteps, onStep) => {
+    let wp = 0;
+    for (let i = 0; i < maxSteps && wp < waypoints.length; i++) {
+      const target = waypoints[wp];
+      const dx = target.x - player.pos.x;
+      const dz = target.z - player.pos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 3) { wp += 1; continue; }
+      const desired = Math.atan2(dx, dz);
+      const err = wrapAngle(desired - player.heading);
+      const steer = err > 0.05 ? -1 : err < -0.05 ? 1 : 0;
+      let throttle = Math.abs(err) > 0.5 && Math.abs(player.speed) > 3 ? 0 : 1;
+      if (throttle > 0) {
+        const fx = Math.sin(player.heading);
+        const fz = Math.cos(player.heading);
+        for (const t of traffic.getState()) {
+          const rx = t.x - player.pos.x;
+          const rz = t.z - player.pos.z;
+          const along = rx * fx + rz * fz;
+          if (along <= 0 || along > 12) continue;
+          const lat = Math.abs(rx * fz - rz * fx);
+          if (lat > 3) continue;
+          const tx2 = Math.sin(t.heading);
+          const tz2 = Math.cos(t.heading);
+          if (tx2 * fx + tz2 * fz < 0.2) continue;
+          throttle = 0;
+          break;
+        }
+      }
+      input.setSynthetic(throttle, steer, false);
+      if (onStep) onStep();
+      game.stepWorld(STEP);
+    }
+    return wp >= waypoints.length;
+  };
+
+  // Phase 1: north on Lagoon Ave, west on 3rd St to the pickup ring.
+  // The pickup is an on-foot action: stop at the ring, get out (E),
+  // take the package (E), get back in the same car (E), then keep
+  // driving. The trigger fires inside 5 m so the exit (2.4 m to the
+  // side) can never leave the player outside the 8 m pickup radius.
+  let pickedUp = false;
+  driveTo(
+    [{ x: 42, z: -102 }, { x: -102, z: -102 }],
+    2400,
+    () => {
+      if (pickedUp || mission.state !== 'idle') return;
+      if (Math.hypot(-102 - player.pos.x, -102 - player.pos.z) >= 5) return;
+      if (player.mode === 'car') {
+        // Three E presses, one step each — exactly like a real player:
+        // exit, pick up on foot, re-enter.
+        input.setSynthetic(0, 0, false);
+        input._ePressed = true; game.stepWorld(STEP); // exit
+        input._ePressed = true; game.stepWorld(STEP); // pick up
+        input._ePressed = true; game.stepWorld(STEP); // re-enter
+      } else {
+        // Already on foot near the ring (retry after a missed pickup):
+        // take the package, then get back in.
+        input._ePressed = true; game.stepWorld(STEP); // pick up
+        input._ePressed = true; game.stepWorld(STEP); // re-enter
+      }
+      if (mission.state === 'active') pickedUp = true;
+    },
+  );
+  if (mission.state !== 'active') throw new Error(`mission shot: pickup failed (state ${mission.state})`);
+
+  // Phase 2: south on Palm Ave, east on 6th St, south on Breeze Ave
+  // toward Kantor Coral. Frame partway there, still carrying.
+  driveTo([{ x: -102, z: 42 }, { x: 138, z: 42 }, { x: 138, z: 100 }], 2400);
+  if (mission.state !== 'active') throw new Error(`mission shot: mission lost on the way (state ${mission.state})`);
+  if (mission.timeLeft <= 0) throw new Error('mission shot: timer expired');
+
+  input.setSynthetic(0, 0, false);
+  hud.update(game.getHudState());
+  lights.follow(player.pos);
+  updateCamera(camera, player.getCameraTarget(), input.yaw, input.pitch, input.distance);
+  renderer.render(scene, camera);
+}
+
+// City shot: a wide vista from the west edge — Raka on foot on Sunset
+// Ave, camera high above the rooftops and looking east across the
+// skyline to the beach and the water. No driving, no mission progress:
+// just the city. The camera sits high enough (about 40 m) to clear the
+// tallest roofs, so the frame reads as a whole city, not one street.
+function runCityShot(game) {
+  const { player, input, hud, lights, camera, renderer, scene } = game;
+  player.pos.set(-150, 0, -6);
+  player.heading = Math.PI / 2; // facing east, toward the beach
+  player.mode = 'foot';
+  player.speed = 0;
+  player.figure.visible = true;
+  // Camera west of the player, high up, looking east: yaw -PI/2 puts
+  // the camera on the -x side; pitch 0.7 lifts it above the roofs.
+  input.yaw = -Math.PI / 2;
+  input.pitch = 0.7;
+  input.distance = 60;
+  hud.update(game.getHudState());
+  lights.follow(player.pos);
+  updateCamera(camera, player.getCameraTarget(), input.yaw, input.pitch, input.distance);
+  renderer.render(scene, camera);
 }
 
 // Chase shot (cover): Raka steals the north-facing Sirocco on Marina Ave

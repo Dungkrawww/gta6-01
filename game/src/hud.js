@@ -14,6 +14,8 @@ export class Hud {
     this.elWanted = document.getElementById('hud-wanted');
     this.elCash = document.getElementById('hud-cash');
     this.elHealthBar = document.getElementById('hud-health-bar');
+    this.elMission = document.getElementById('hud-mission');
+    this.elBanner = document.getElementById('hud-banner');
     this.map = document.getElementById('minimap');
     this.mapCtx = this.map.getContext('2d');
   }
@@ -30,9 +32,21 @@ export class Hud {
     } else {
       this.elSpeed.textContent = `${Math.round(state.speedKmh)} km/h — On foot (E to enter car)`;
     }
-    this.elPrompt.textContent = state.nearCar
-      ? `Press E to steal the ${state.nearCar.name}`
-      : '';
+    // Mission prompt first (it owns the E key here), then the car prompt.
+    const missionPrompt = state.mission ? state.mission.prompt : null;
+    if (missionPrompt) {
+      this.elPrompt.textContent = missionPrompt;
+    } else if (state.nearCar) {
+      this.elPrompt.textContent = state.nearCar.owned
+        ? `Press E to enter your ${state.nearCar.name}`
+        : `Press E to steal the ${state.nearCar.name}`;
+    }
+    // Mission objective line (Block C): what to do next, with the timer.
+    if (state.mission) {
+      this.elMission.textContent = `MISI: Kurir Panas — ${state.mission.objective}`;
+    }
+    // Transient banner (pickup / delivery / failure).
+    this.elBanner.textContent = state.banner || '';
     // Wanted stars (Block B): filled for the current level, hollow above.
     const wanted = state.wanted || 0;
     this.elWanted.textContent = wanted > 0
@@ -109,6 +123,14 @@ export class Hud {
       ctx.fillStyle = '#ffffff';
       for (const car of state.roadblock) {
         ctx.fillRect(toX(car.x) - 2.5, toZ(car.z) - 2.5, 5, 5);
+      }
+    }
+
+    // Mission markers: pickup (yellow) and delivery (green).
+    if (state.mission && state.mission.markers) {
+      for (const m of state.mission.markers) {
+        ctx.fillStyle = m.kind === 'pickup' ? '#e8c832' : '#3aa655';
+        ctx.fillRect(toX(m.x) - 3, toZ(m.z) - 3, 6, 6);
       }
     }
 

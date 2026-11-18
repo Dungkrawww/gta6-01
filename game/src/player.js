@@ -119,12 +119,15 @@ export class Player {
     scene.add(this.figure);
 
     // One mesh per parked car; the driven car is just one of them, moving.
+    // owned: the player already paid the theft heat for this car once,
+    // so getting back into it is free (Block C fix — re-entering your
+    // own parked car must not charge a second theft).
     this.cars = city.parkedCars.map((data) => {
       const mesh = buildCarMesh(data.color);
       mesh.position.set(data.x, 0, data.z);
       mesh.rotation.y = data.heading;
       scene.add(mesh);
-      return { ...data, speed: 0, mesh };
+      return { ...data, speed: 0, mesh, owned: false };
     });
   }
 
@@ -150,15 +153,22 @@ export class Player {
     return best;
   }
 
-  // hooks: { now, onSteal, onCarBump } — optional; the shot runner and
-  // the main loop pass them so crimes are reported to the wanted system.
+  // hooks: { now, onSteal, onCarBump, onInteract } — optional; the shot
+  // runner and the main loop pass them so crimes are reported to the
+  // wanted system and the mission gets first refusal on E.
   step(dt, input, hooks) {
     if (hooks) {
       this.onSteal = hooks.onSteal || null;
       this.onCarBump = hooks.onCarBump || null;
+      this._onInteract = hooks.onInteract || null;
       this._now = hooks.now || 0;
     }
-    if (input.consumeInteract()) this._toggleCar();
+    if (input.consumeInteract()) {
+      // The mission gets first refusal on E (pick up / deliver). Only
+      // when it has nothing to do here does E toggle the car.
+      const consumed = this._onInteract ? this._onInteract() : false;
+      if (!consumed) this._toggleCar();
+    }
     if (this.mode === 'foot') this._stepFoot(dt, input);
     else this._stepCar(dt, input);
     this._updateMeshes();
@@ -174,8 +184,12 @@ export class Player {
       this.pos.set(car.x, 0, car.z);
       this.heading = car.heading;
       this.figure.visible = false;
-      // Taking a parked car is a witnessed crime (Block B wanted system).
-      if (this.onSteal) this.onSteal(car);
+      // Taking a parked car is a witnessed crime — but only the first
+      // time for each car. Getting back into a car you already stole
+      // is free: the heat was paid once.
+      const firstTheft = !car.owned;
+      car.owned = true;
+      if (firstTheft && this.onSteal) this.onSteal(car);
     } else {
       const car = this.drivenCar;
       // Step out on the car's right side.
@@ -184,6 +198,10 @@ export class Player {
       this.pos.set(car.x + sideX * 2.4, 0, car.z + sideZ * 2.4);
       clampToBounds(this.pos);
       car.speed = 0;
+      // Parked again, not taken — but still owned, so getting back in
+      // is free. (Block B left taken=true here, which made nearestCar
+      // skip your own car forever: you could never get back in.)
+      car.taken = false;
       this.drivenCar = null;
       this.mode = 'foot';
       this.figure.visible = true;

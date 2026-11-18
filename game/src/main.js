@@ -4,7 +4,8 @@
 // per animation frame; it never enters simulation state.
 import { STEP, DEFAULT_SEED, CASH_START, HEALTH_START, FINE_CAUGHT,
   HEAT_STEAL, HEAT_HIT_CAR, HEAT_HIT_PED,
-  HEALTH_HIT_BY_CAR, HEALTH_HARD_CRASH, HEALTH_REGEN_PER_SEC } from './config.js';
+  HEALTH_HIT_BY_CAR, HEALTH_HARD_CRASH, HEALTH_REGEN_PER_SEC,
+  MISSION_RETRY_RESPAWN, SAVE_AUTOSAVE_STEPS } from './config.js';
 import { Input } from './input.js';
 import { generateCity } from './world.js';
 import {
@@ -15,6 +16,8 @@ import { Player } from './player.js';
 import { Traffic } from './traffic.js';
 import { Peds } from './peds.js';
 import { Police } from './police.js';
+import { Mission } from './missions.js';
+import { writeSave, readSave, hasSave, clearSave } from './save.js';
 import { Hud } from './hud.js';
 import { runShot, getShotParams } from './shots.js';
 
@@ -32,12 +35,39 @@ const traffic = new Traffic(scene, city, seed);
 const peds = new Peds(scene, city, seed);
 const police = new Police(scene, city, seed);
 const hud = new Hud(city);
+// Block C systems: the M1 mission and the save file.
+const mission = new Mission(scene);
 
 // Player economy + health (Block B HUD + caught fine).
 let cash = CASH_START;
 let health = HEALTH_START;
 let lastDamageAt = -999;
 let lastHardCrashAt = -999;
+// Game flow: 'title' | 'play' | 'paused' | 'gameover'.
+let gameState = 'title';
+// Transient banner line (pickup / delivery / failure), in sim steps.
+let bannerText = '';
+let bannerUntilStep = 0;
+
+function showBanner(text) {
+  bannerText = text;
+  bannerUntilStep = game.steps + 240; // ~4 sim-seconds
+}
+
+// Mission callbacks: pickup and delivery feed the HUD banner and the
+// save file; the reward lands in cash exactly once, via deliver().
+mission.onPickup = () => {
+  showBanner('Paket diambil! Antar ke Kantor Coral');
+  saveNow();
+};
+mission.onDeliver = (amount) => {
+  cash += amount;
+  showBanner(`+$${amount}! Misi selesai`);
+  saveNow();
+};
+mission.onTimeout = () => {
+  showGameOver('Waktu habis');
+};
 
 function damage(amount, now) {
   health = Math.max(0, health - amount);
@@ -45,6 +75,7 @@ function damage(amount, now) {
 }
 
 // Caught by the police: respawn on foot at the start spot, pay the fine.
+// Caught while carrying the package: the run fails too, game over.
 function onCaught() {
   const car = player.drivenCar;
   if (car) {
@@ -59,6 +90,13 @@ function onCaught() {
   player.figure.visible = true;
   cash = Math.max(0, cash - FINE_CAUGHT);
   health = HEALTH_START;
+  if (mission.state === 'active' && mission.carried) {
+    mission.fail('Tertangkap');
+    showBanner('Tertangkap! Denda $50');
+    showGameOver('Tertangkap');
+  } else {
+    saveNow();
+  }
 }
 
 // One fixed step of the whole world: player, traffic, peds, police, then
@@ -72,6 +110,11 @@ function stepWorld(dt) {
     now,
     onSteal: () => police.addHeat(HEAT_STEAL, now),
     onCarBump: () => police.addHeat(HEAT_HIT_CAR, now),
+    // The mission gets first refusal on E (pick up / deliver). Only
+    // when it has nothing to do here does E toggle the car. The mission
+    // needs to know whether the player is driving — the pickup is an
+    // on-foot action, the delivery is a drive-through.
+    onInteract: () => mission.tryInteract(player.pos.x, player.pos.z, player.mode === 'car'),
   });
 
   // Obstacles traffic must not rear-end: police cars, the player's car,
@@ -104,8 +147,16 @@ function stepWorld(dt) {
     onCaught,
   });
 
+  // The mission clock and markers advance with the world — including in
+  // shot mode, where the mission shot plays a real run.
+  mission.step(dt, { now, x: player.pos.x, z: player.pos.z, mode: player.mode });
+
   checkCollisions(dt, now, prevSpeed);
   game.steps += 1;
+
+  // Autosave every 5 sim-seconds during real play (never in shot mode:
+  // a shot must not overwrite the player's save).
+  if (!shot && gameState === 'play' && game.steps % SAVE_AUTOSAVE_STEPS === 0) saveNow();
 }
 
 // Collisions between the player and the world: running over a pedestrian
@@ -184,6 +235,110 @@ function checkCollisions(dt, now, prevSpeed) {
   }
 }
 
+// ---- Block C: save / load / game over / retry. ----
+function buildSaveData() {
+  return {
+    version: 1,
+    cash,
+    health: Math.round(health),
+    mission: mission.toSave(),
+    player: { x: player.pos.x, z: player.pos.z, heading: player.heading, mode: player.mode },
+    car: player.drivenCar ? {
+      index: player.cars.indexOf(player.drivenCar),
+      x: player.drivenCar.x,
+      z: player.drivenCar.z,
+      heading: player.drivenCar.heading,
+      speed: player.drivenCar.speed,
+    } : null,
+    wanted: { heat: police.heat, level: police.level },
+    steps: game.steps,
+  };
+}
+
+// Write the current state to LocalStorage now (autosave, transitions,
+// pause, game over). Called by the playtest as window.__game.saveNow().
+function saveNow() {
+  return writeSave(buildSaveData());
+}
+
+// Restore a save: cash, mission, player, car, wanted. Returns false
+// when there is no save. A failed mission loads as failed (the status
+// is preserved, not erased) and the game resumes in play — the player
+// restarts the run with E at the pickup ring.
+function loadSave() {
+  const data = readSave();
+  if (!data) return false;
+  cash = typeof data.cash === 'number' ? data.cash : CASH_START;
+  health = typeof data.health === 'number' ? data.health : HEALTH_START;
+  mission.fromSave(data.mission);
+  const p = data.player || {};
+  player.pos.set(typeof p.x === 'number' ? p.x : -150, 0, typeof p.z === 'number' ? p.z : 24);
+  player.heading = typeof p.heading === 'number' ? p.heading : 0;
+  player.speed = 0;
+  const carData = data.car;
+  if (carData && Number.isInteger(carData.index) && player.cars[carData.index]) {
+    const car = player.cars[carData.index];
+    car.x = carData.x;
+    car.z = carData.z;
+    car.heading = carData.heading;
+    car.speed = carData.speed || 0;
+    car.taken = true;
+    car.owned = true;
+    player.drivenCar = car;
+    player.mode = 'car';
+    player.pos.set(car.x, 0, car.z);
+    player.heading = car.heading;
+    player.figure.visible = false;
+  } else {
+    player.drivenCar = null;
+    player.mode = 'foot';
+    player.figure.visible = true;
+  }
+  if (data.wanted) {
+    police.heat = data.wanted.heat || 0;
+    police.level = data.wanted.level || 0;
+  }
+  return true;
+}
+
+function showGameOver(reason) {
+  gameState = 'gameover';
+  document.getElementById('gameover-reason').textContent = reason;
+  document.getElementById('gameover').classList.remove('hidden');
+  saveNow();
+}
+
+// Retry from the game-over screen: the run resets, Raka respawns on
+// foot 6 m from the pickup, wanted cleared, health restored. Cash is
+// kept as-is (no second fine, no reward).
+function retryMission() {
+  mission.reset();
+  police.heat = 0;
+  police.level = 0;
+  if (player.drivenCar) {
+    player.drivenCar.speed = 0;
+    player.drivenCar.taken = false;
+    player.drivenCar = null;
+  }
+  player.mode = 'foot';
+  player.pos.set(MISSION_RETRY_RESPAWN.x, 0, MISSION_RETRY_RESPAWN.z);
+  player.heading = 0;
+  player.speed = 0;
+  player.figure.visible = true;
+  health = HEALTH_START;
+  document.getElementById('gameover').classList.add('hidden');
+  gameState = 'play';
+  saveNow();
+}
+
+function toTitle() {
+  gameState = 'title';
+  document.getElementById('gameover').classList.add('hidden');
+  document.getElementById('pause').classList.add('hidden');
+  document.getElementById('title').classList.remove('hidden');
+  if (hasSave()) document.getElementById('title-continue').classList.remove('hidden');
+}
+
 function getHudState() {
   const policeState = police.getState();
   return {
@@ -196,10 +351,12 @@ function getHudState() {
     roadblock: policeState.roadblock,
     traffic: traffic.getState(),
     peds: peds.getState(),
+    mission: mission.getState(),
+    banner: game.steps < bannerUntilStep ? bannerText : '',
   };
 }
 
-const game = { renderer, scene, camera, lights, city, player, input, hud, traffic, peds, police, stepWorld, getHudState, get cash() { return cash; }, get health() { return health; }, steps: 0 };
+const game = { renderer, scene, camera, lights, city, player, input, hud, traffic, peds, police, mission, stepWorld, getHudState, saveNow, loadSave, retryMission, getSave: () => readSave(), get cash() { return cash; }, get health() { return health; }, get gameState() { return gameState; }, steps: 0 };
 window.__game = game;
 window.__shotReady = false;
 
@@ -215,18 +372,71 @@ if (shot) {
   }
 } else {
   // Normal play: title screen, then the loop.
-  let state = 'title';
   const titleEl = document.getElementById('title');
+  const pauseEl = document.getElementById('pause');
+  const gameoverEl = document.getElementById('gameover');
+  const continueEl = document.getElementById('title-continue');
+
   const startGame = () => {
-    if (state !== 'title') return;
-    state = 'play';
+    if (gameState !== 'title') return;
+    // A new game starts clean: the old save goes away, the mission
+    // resets, cash and health restart.
+    clearSave();
+    mission.reset();
+    cash = CASH_START;
+    health = HEALTH_START;
+    if (player.drivenCar) {
+      player.drivenCar.speed = 0;
+      player.drivenCar.taken = false;
+      player.drivenCar = null;
+    }
+    player.mode = 'foot';
+    player.pos.set(-150, 0, 24);
+    player.heading = 0;
+    player.speed = 0;
+    player.figure.visible = true;
+    police.heat = 0;
+    police.level = 0;
+    gameState = 'play';
     titleEl.classList.add('hidden');
-    hud.update(player.getState());
+    gameoverEl.classList.add('hidden');
+    hud.update(getHudState());
+  };
+  const continueGame = () => {
+    if (gameState !== 'title') return;
+    if (!loadSave()) return;
+    gameState = 'play';
+    titleEl.classList.add('hidden');
+    gameoverEl.classList.add('hidden');
+    hud.update(getHudState());
+  };
+  const togglePause = () => {
+    if (gameState === 'play') {
+      gameState = 'paused';
+      pauseEl.classList.remove('hidden');
+      saveNow();
+    } else if (gameState === 'paused') {
+      gameState = 'play';
+      pauseEl.classList.add('hidden');
+    }
   };
   titleEl.addEventListener('click', startGame);
-  window.addEventListener('keydown', (event) => {
-    if (event.code === 'Enter') startGame();
+  continueEl.addEventListener('click', (event) => {
+    // The Continue button sits inside the title overlay: stop the
+    // click from bubbling up to the title's own (new game) handler.
+    event.stopPropagation();
+    continueGame();
   });
+  document.getElementById('gameover-retry').addEventListener('click', retryMission);
+  document.getElementById('gameover-title').addEventListener('click', toTitle);
+  pauseEl.addEventListener('click', togglePause);
+  window.addEventListener('keydown', (event) => {
+    if (event.code === 'Enter' && gameState === 'title') startGame();
+    if ((event.code === 'Escape' || event.code === 'KeyP') && (gameState === 'play' || gameState === 'paused')) togglePause();
+  });
+
+  // Continue is offered whenever a save exists.
+  if (hasSave()) continueEl.classList.remove('hidden');
 
   // Frame the player for the title backdrop.
   updateCamera(camera, player.getCameraTarget(), input.yaw, input.pitch, input.distance);
@@ -236,7 +446,7 @@ if (shot) {
   let acc = 0;
   function frame(now) {
     requestAnimationFrame(frame);
-    if (state !== 'play') return;
+    if (gameState !== 'play') return;
     if (!last) last = now;
     let dt = (now - last) / 1000;
     last = now;
