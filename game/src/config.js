@@ -100,7 +100,11 @@ export const POLICE_SPAWN_DIST = 70; // spawn this far from the player, on a roa
 // Catch range must exceed the car-ram push distance (4.4 m): a police car
 // grinding head-on into the player sits at ~4.4 m, so a smaller range
 // could never trigger the catch. (Block B fix after the chase debug.)
-export const POLICE_CATCH_DIST = 5.5; // within this for POLICE_CATCH_TIME = caught
+export const POLICE_CATCH_DIST = 8; // within this for POLICE_CATCH_TIME = caught
+// 8 m, not 5.5: a police car drives in its own lane, so a player parked on
+// the far side of the street is ~6 m away laterally (lane offset 2.2 m
+// each side) — the old 5.5 m range could never be reached and the police
+// circled a stopped player forever.
 export const POLICE_CATCH_TIME = 2.5;
 export const POLICE_ROADBLOCK_DIST = 40; // roadblock placed this far ahead (level 3)
 
