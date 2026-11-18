@@ -2,7 +2,9 @@
 // The simulation advances only in fixed STEPs, so a shot run of N steps is
 // identical every time. Wall-clock time only decides how many steps run
 // per animation frame; it never enters simulation state.
-import { STEP, DEFAULT_SEED } from './config.js';
+import { STEP, DEFAULT_SEED, CASH_START, HEALTH_START, FINE_CAUGHT,
+  HEAT_STEAL, HEAT_HIT_CAR, HEAT_HIT_PED,
+  HEALTH_HIT_BY_CAR, HEALTH_HARD_CRASH, HEALTH_REGEN_PER_SEC } from './config.js';
 import { Input } from './input.js';
 import { generateCity } from './world.js';
 import {
@@ -10,6 +12,9 @@ import {
   updateCamera, resizeRenderer,
 } from './render.js';
 import { Player } from './player.js';
+import { Traffic } from './traffic.js';
+import { Peds } from './peds.js';
+import { Police } from './police.js';
 import { Hud } from './hud.js';
 import { runShot, getShotParams } from './shots.js';
 
@@ -22,9 +27,174 @@ const city = generateCity(scene, seed);
 const lights = createLights(scene);
 const input = new Input(canvas);
 const player = new Player(scene, city);
+// Block B systems: traffic, pedestrians, wanted/police.
+const traffic = new Traffic(scene, city, seed);
+const peds = new Peds(scene, city, seed);
+const police = new Police(scene, city, seed);
 const hud = new Hud(city);
 
-const game = { renderer, scene, camera, lights, city, player, input, hud, steps: 0 };
+// Player economy + health (Block B HUD + caught fine).
+let cash = CASH_START;
+let health = HEALTH_START;
+let lastDamageAt = -999;
+let lastHardCrashAt = -999;
+
+function damage(amount, now) {
+  health = Math.max(0, health - amount);
+  lastDamageAt = now;
+}
+
+// Caught by the police: respawn on foot at the start spot, pay the fine.
+function onCaught() {
+  const car = player.drivenCar;
+  if (car) {
+    car.speed = 0;
+    car.taken = false;
+    player.drivenCar = null;
+  }
+  player.mode = 'foot';
+  player.pos.set(-150, 0, 24);
+  player.heading = 0;
+  player.speed = 0;
+  player.figure.visible = true;
+  cash = Math.max(0, cash - FINE_CAUGHT);
+  health = HEALTH_START;
+}
+
+// One fixed step of the whole world: player, traffic, peds, police, then
+// the collision/crime checks that join them. The frame loop and the shot
+// runner both call this, so a shot plays the real rules.
+function stepWorld(dt) {
+  const now = game.steps * STEP;
+  const prevSpeed = Math.abs(player.speed);
+
+  player.step(dt, input, {
+    now,
+    onSteal: () => police.addHeat(HEAT_STEAL, now),
+    onCarBump: () => police.addHeat(HEAT_HIT_CAR, now),
+  });
+
+  // Obstacles traffic must not rear-end: police cars, the player's car,
+  // and the level-3 roadblock.
+  const policeState = police.getState();
+  const obstacles = [...policeState.cars];
+  if (player.mode === 'car') {
+    obstacles.push({ x: player.pos.x, z: player.pos.z, speed: Math.abs(player.speed), heading: player.heading });
+  }
+  for (const c of policeState.roadblock) obstacles.push({ ...c, speed: 0 });
+
+  // Chaos peds flee from: a fast player car, or any pursuing police car.
+  const chaos = [];
+  if (player.mode === 'car' && Math.abs(player.speed) > 8) {
+    chaos.push({ x: player.pos.x, z: player.pos.z });
+  }
+  for (const c of policeState.cars) chaos.push({ x: c.x, z: c.z });
+
+  const trafficState = traffic.getState();
+  const carsForPeds = [...trafficState, ...policeState.cars];
+  if (player.mode === 'car') {
+    carsForPeds.push({ x: player.pos.x, z: player.pos.z, speed: Math.abs(player.speed), heading: player.heading });
+  }
+  traffic.step(dt, { now, obstacles, peds: peds.getState() });
+  peds.step(dt, { now, chaos, cars: carsForPeds });
+  police.step(dt, {
+    now,
+    player: { x: player.pos.x, z: player.pos.z, mode: player.mode, speed: player.speed, heading: player.heading },
+    traffic: traffic.getState(),
+    onCaught,
+  });
+
+  checkCollisions(dt, now, prevSpeed);
+  game.steps += 1;
+}
+
+// Collisions between the player and the world: running over a pedestrian
+// (a crime), ramming traffic/police/roadblock cars (a crime for traffic),
+// being hit by a traffic car on foot, and hard wall crashes.
+function checkCollisions(dt, now, prevSpeed) {
+  const px = player.pos.x;
+  const pz = player.pos.z;
+
+  if (player.mode === 'car') {
+    const speed = Math.abs(player.speed);
+    // Run over a pedestrian.
+    for (const ped of peds.peds) {
+      const d = Math.hypot(ped.x - px, ped.z - pz);
+      if (d < 2.0 && speed > 3 && now > ped.hitCooldownUntil) {
+        peds.knockDown(ped, now);
+        police.addHeat(HEAT_HIT_PED, now);
+      }
+    }
+    // Ram another car: bounce off it, lose speed; traffic rams are crimes.
+    const ram = (ox, oz, isTrafficCar, carObj) => {
+      const dx = px - ox;
+      const dz = pz - oz;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 4.4 && dist > 0.01) {
+        const push = (4.4 - dist) / dist;
+        player.pos.x += dx * push * 0.5;
+        player.pos.z += dz * push * 0.5;
+        if (speed > 5 && isTrafficCar && carObj
+          && (now - (carObj._lastBumpAt || -99)) > 2) {
+          carObj._lastBumpAt = now;
+          police.addHeat(HEAT_HIT_CAR, now);
+        }
+        if (player.drivenCar) player.drivenCar.speed *= 0.5;
+      }
+    };
+    for (const car of traffic.cars) {
+      const p = traffic.posOf(car);
+      ram(p.x, p.z, true, car);
+    }
+    for (const car of police.cars) {
+      const p = { x: car.mesh.position.x, z: car.mesh.position.z };
+      ram(p.x, p.z, false, null);
+    }
+    for (const car of police.roadblock) ram(car.x, car.z, false, null);
+    // Hard wall crash costs health.
+    const driven = player.drivenCar;
+    if (driven && driven._hitWall && prevSpeed > 18 && now - lastHardCrashAt > 1) {
+      lastHardCrashAt = now;
+      damage(HEALTH_HARD_CRASH, now);
+    }
+  } else {
+    // On foot: a traffic car that touches Raka hurts.
+    for (const car of traffic.cars) {
+      const p = traffic.posOf(car);
+      const d = Math.hypot(p.x - px, p.z - pz);
+      if (d < 1.8 && car.speed > 2 && now - lastDamageAt > 1) {
+        damage(HEALTH_HIT_BY_CAR, now);
+        const dx = px - p.x;
+        const dz = pz - p.z;
+        const len = Math.hypot(dx, dz) || 1;
+        player.pos.x += (dx / len) * 1.5;
+        player.pos.z += (dz / len) * 1.5;
+      }
+    }
+  }
+
+  // Health regenerates after 5 quiet seconds.
+  if (health < HEALTH_START && now - lastDamageAt > 5) {
+    health = Math.min(HEALTH_START, health + HEALTH_REGEN_PER_SEC * dt);
+  }
+}
+
+function getHudState() {
+  const policeState = police.getState();
+  return {
+    ...player.getState(),
+    wanted: policeState.wanted,
+    cash,
+    health: Math.round(health),
+    time: game.steps * STEP,
+    police: policeState.cars,
+    roadblock: policeState.roadblock,
+    traffic: traffic.getState(),
+    peds: peds.getState(),
+  };
+}
+
+const game = { renderer, scene, camera, lights, city, player, input, hud, traffic, peds, police, stepWorld, getHudState, get cash() { return cash; }, get health() { return health; }, steps: 0 };
 window.__game = game;
 window.__shotReady = false;
 
@@ -69,12 +239,11 @@ if (shot) {
     acc += dt;
     let steps = 0;
     while (acc >= STEP && steps < 5) {
-      player.step(STEP, input);
+      stepWorld(STEP);
       acc -= STEP;
       steps += 1;
     }
-    game.steps += steps;
-    hud.update(player.getState());
+    hud.update(getHudState());
     lights.follow(player.pos);
     updateCamera(camera, player.getCameraTarget(), input.yaw, input.pitch, input.distance);
     renderer.render(scene, camera);

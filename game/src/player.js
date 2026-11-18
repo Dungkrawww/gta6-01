@@ -226,7 +226,11 @@ export class Player {
 
     const speedFactor = 1 - Math.min(Math.abs(car.speed) / CAR_MAX_SPEED, 1) * 0.55;
     const steerAngle = CAR_STEER_MAX * input.moveStrafe * speedFactor;
-    car.heading += (car.speed / 2.7) * Math.tan(steerAngle) * dt;
+    // Steering: D turns right. Heading decreases for a right turn because
+    // the car's forward is (sin h, cos h) and a right turn rotates it
+    // clockwise viewed from above. (Block A had this sign flipped: D
+    // turned left. Fixed in Block B; verified by the combined playtest.)
+    car.heading -= (car.speed / 2.7) * Math.tan(steerAngle) * dt;
 
     this.pos.x += Math.sin(car.heading) * car.speed * dt;
     this.pos.z += Math.cos(car.heading) * car.speed * dt;
@@ -234,6 +238,7 @@ export class Player {
     this.speed = car.speed;
 
     const hitWall = resolveCircleCollision(this.pos, CAR_RADIUS, this.city.colliders);
+    car._hitWall = hitWall;
     if (hitWall) car.speed *= 0.4;
     // Bump into other parked cars (circles, cheap and good enough).
     // A hard bump is a crime, reported at most once per car per 2 s.

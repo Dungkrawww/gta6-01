@@ -11,6 +11,9 @@ export class Hud {
     this.elLocation = document.getElementById('hud-location');
     this.elSpeed = document.getElementById('hud-speed');
     this.elPrompt = document.getElementById('hud-prompt');
+    this.elWanted = document.getElementById('hud-wanted');
+    this.elCash = document.getElementById('hud-cash');
+    this.elHealthBar = document.getElementById('hud-health-bar');
     this.map = document.getElementById('minimap');
     this.mapCtx = this.map.getContext('2d');
   }
@@ -30,6 +33,16 @@ export class Hud {
     this.elPrompt.textContent = state.nearCar
       ? `Press E to steal the ${state.nearCar.name}`
       : '';
+    // Wanted stars (Block B): filled for the current level, hollow above.
+    const wanted = state.wanted || 0;
+    this.elWanted.textContent = wanted > 0
+      ? `WANTED ${'★'.repeat(wanted)}${'☆'.repeat(3 - wanted)}`
+      : '';
+    this.elWanted.style.color = wanted >= 3 ? '#ff4444' : '#ffd75e';
+    this.elCash.textContent = `$${state.cash ?? 0}`;
+    const health = state.health ?? 100;
+    this.elHealthBar.style.width = `${Math.max(0, Math.min(100, health))}%`;
+    this.elHealthBar.style.background = health > 50 ? '#3aa655' : health > 25 ? '#e8c832' : '#c22f2f';
     this._drawMinimap(state);
   }
 
@@ -62,6 +75,41 @@ export class Hud {
     ctx.fillStyle = '#dfe3e6';
     for (const car of this.city.parkedCars) {
       ctx.fillRect(toX(car.x) - 1.5, toZ(car.z) - 1.5, 3, 3);
+    }
+
+    // Traffic as small grey dots.
+    if (state.traffic) {
+      ctx.fillStyle = '#9aa5b1';
+      for (const car of state.traffic) {
+        ctx.fillRect(toX(car.x) - 1.5, toZ(car.z) - 1.5, 3, 3);
+      }
+    }
+
+    // Pedestrians as faint dots.
+    if (state.peds) {
+      ctx.fillStyle = 'rgba(200, 210, 220, 0.55)';
+      for (const ped of state.peds) {
+        ctx.fillRect(toX(ped.x) - 1, toZ(ped.z) - 1, 2, 2);
+      }
+    }
+
+    // Police as flashing blue/red dots (Block B) — the chase, on the map.
+    if (state.police) {
+      const phase = Math.floor((state.time || 0) * 2) % 2 === 0;
+      ctx.fillStyle = phase ? '#3a86ff' : '#ff3333';
+      for (const car of state.police) {
+        ctx.beginPath();
+        ctx.arc(toX(car.x), toZ(car.z), 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Roadblock cars as white squares.
+    if (state.roadblock) {
+      ctx.fillStyle = '#ffffff';
+      for (const car of state.roadblock) {
+        ctx.fillRect(toX(car.x) - 2.5, toZ(car.z) - 2.5, 5, 5);
+      }
     }
 
     // Player arrow, rotated by heading.
