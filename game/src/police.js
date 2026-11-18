@@ -239,6 +239,14 @@ export class Police {
         if (distToPlayer < 5.5) target = 0;
         else if (distToPlayer < 10) target = Math.min(target, playerSpeed);
       }
+      // Close in on a stopped player: slow down as we approach so we
+      // arrive next to them (inside the catch zone) instead of driving
+      // past at full speed in the next lane and never staying close long
+      // enough to catch. Without this the police circled a stopped
+      // player for 40 s and the heat decayed before any catch.
+      if (player.mode === 'car' && playerSpeed <= 2 && distToPlayer < 20) {
+        target = Math.min(target, Math.max(0, (distToPlayer - 4) * 0.5));
+      }
 
       // Slow for the car ahead in the same lane.
       const fx = car.axis === 'z' ? 0 : car.dir;

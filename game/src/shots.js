@@ -88,15 +88,20 @@ function runChaseShot(game) {
   if (player.mode !== 'car') throw new Error('chase shot: steal failed');
 
   // Phase 2: waypoint drive (real driving, real rules) — north on Marina
-  // Ave to 42nd St, east along it to Coral Ave, south into the parked
+  // Ave to 42nd St, east along it to Coral Ave, south past the parked
   // Citra. The Citra sits 1.6 m off the southbound lane, so the player
   // cannot pass without hitting it: a real ram, real heat, wanted 2.
   // The route is short (the ram lands ~7 s after the steal), so heat has
-  // not decayed below the level-2 threshold yet.
+  // not decayed below the level-2 threshold yet. The third waypoint
+  // clips the Citra's east side (x = 136, 1.8 m off its centre) and the
+  // fourth pulls south past it: aiming AT the Citra wedged the car
+  // against it for 9 s (and the police, who now correctly close in on a
+  // stopped player, caught it mid-shot).
   const waypoints = [
     { x: 45.8, z: 42 },
     { x: 134.2, z: 42 },
-    { x: 134.2, z: 58.5 },
+    { x: 136, z: 58.5 },
+    { x: 138, z: 70 },
   ];
   let wp = 0;
   const wrapAngle = (a) => {
@@ -109,7 +114,12 @@ function runChaseShot(game) {
     const dx = target.x - player.pos.x;
     const dz = target.z - player.pos.z;
     const dist = Math.hypot(dx, dz);
-    if (dist < 3) { wp += 1; continue; }
+    // Advance on arrival — or on the ram: once wanted hits 2 the car
+    // has clipped the Citra, and the waypoint (on the Citra's east edge)
+    // sits inside its collision zone, so the car can never get within
+    // 3 m of it and would wedge there until the police catch it. Move
+    // past the Citra instead.
+    if (dist < 3 || (wp === 2 && police.level >= 2)) { wp += 1; continue; }
     const desired = Math.atan2(dx, dz);
     const err = wrapAngle(desired - player.heading);
     const steer = err > 0.05 ? -1 : err < -0.05 ? 1 : 0;
@@ -140,21 +150,19 @@ function runChaseShot(game) {
   }
   if (police.level < 2) throw new Error(`chase shot: ram did not raise wanted to 2 (level ${police.level})`);
 
-  // Phase 3: keep driving south past the rammed Citra for 1 s, then the
-  // frame. The east-biased target (x = 143 while still beside the Citra)
-  // steers the car around the Citra's east side instead of pushing
-  // through it; once past, it holds the avenue centre. 60 steps only:
-  // a stopped traffic car waits further south on this avenue, and the
-  // player rear-ends it around step 90 — the frame is taken while the
-  // player is still moving and the nearest police car is right on its
-  // tail.
-  for (let i = 0; i < 60; i++) {
+  // Phase 3: cruise south for 2 s, then the frame. Pulsed throttle holds
+  // ~14 m/s (slower than the 27 m/s police top speed, so the pursuit
+  // closes from ~30 m to ~5-10 m behind — right on the player's tail).
+  // The east-biased target (x = 143 while still beside the Citra) steers
+  // the car around the Citra's east side; once past, it holds the
+  // avenue centre.
+  for (let i = 0; i < 120; i++) {
     const tx = player.pos.z < 64 ? 143 : 138;
     const tz = player.pos.z + 40;
     const desired = Math.atan2(tx - player.pos.x, tz - player.pos.z);
     const err = wrapAngle(desired - player.heading);
     const steer = err > 0.05 ? -1 : err < -0.05 ? 1 : 0;
-    let throttle = 1;
+    let throttle = (i % 5 < 3) ? 1 : 0;
     const fx = Math.sin(player.heading);
     const fz = Math.cos(player.heading);
     for (const t of traffic.getState()) {
