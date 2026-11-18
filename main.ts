@@ -1,3 +1,7 @@
+// Solara City (Block A, 2026-11-18): the game in game/ is now an open-world
+// crime game built by the recorded agent — a procedural sun-soaked coastal
+// city (Three.js), on foot and by car, with stealable cars. This program
+// still only copies game/ + screenshots/ and writes the dossier.
 // A working gta6-01 entry (Node 22, standard library only): the game is this directory's
 // game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
 // modules, no library and no network request), and the program hands it in. It copies game/ and
