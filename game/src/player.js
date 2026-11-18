@@ -12,7 +12,7 @@ import { clampToBounds, resolveCircleCollision } from './world.js';
 
 const _target = new THREE.Vector3();
 
-function buildCarMesh(color) {
+export function buildCarMesh(color) {
   const car = new THREE.Group();
   const paint = new THREE.MeshLambertMaterial({ color });
   const dark = new THREE.MeshLambertMaterial({ color: 0x1c1e22 });
@@ -56,9 +56,9 @@ function buildCarMesh(color) {
   return car;
 }
 
-function buildFigureMesh() {
+export function buildFigureMesh(shirtColor = 0xe8542f) {
   const figure = new THREE.Group();
-  const shirt = new THREE.MeshLambertMaterial({ color: 0xe8542f });
+  const shirt = new THREE.MeshLambertMaterial({ color: shirtColor });
   const skin = new THREE.MeshLambertMaterial({ color: 0xc98d64 });
   const pants = new THREE.MeshLambertMaterial({ color: 0x2c3a4d });
 
@@ -111,6 +111,9 @@ export class Player {
     this.speed = 0;
     this.walkPhase = 0;
     this.drivenCar = null;
+    // Hooks the world wires up (Block B): stealing and ramming are crimes.
+    this.onSteal = null; // (car) => void
+    this.onCarBump = null; // (otherCar, speed) => void
 
     this.figure = buildFigureMesh();
     scene.add(this.figure);
@@ -147,7 +150,14 @@ export class Player {
     return best;
   }
 
-  step(dt, input) {
+  // hooks: { now, onSteal, onCarBump } — optional; the shot runner and
+  // the main loop pass them so crimes are reported to the wanted system.
+  step(dt, input, hooks) {
+    if (hooks) {
+      this.onSteal = hooks.onSteal || null;
+      this.onCarBump = hooks.onCarBump || null;
+      this._now = hooks.now || 0;
+    }
     if (input.consumeInteract()) this._toggleCar();
     if (this.mode === 'foot') this._stepFoot(dt, input);
     else this._stepCar(dt, input);
@@ -164,6 +174,8 @@ export class Player {
       this.pos.set(car.x, 0, car.z);
       this.heading = car.heading;
       this.figure.visible = false;
+      // Taking a parked car is a witnessed crime (Block B wanted system).
+      if (this.onSteal) this.onSteal(car);
     } else {
       const car = this.drivenCar;
       // Step out on the car's right side.
@@ -224,6 +236,7 @@ export class Player {
     const hitWall = resolveCircleCollision(this.pos, CAR_RADIUS, this.city.colliders);
     if (hitWall) car.speed *= 0.4;
     // Bump into other parked cars (circles, cheap and good enough).
+    // A hard bump is a crime, reported at most once per car per 2 s.
     for (const other of this.cars) {
       if (other === car) continue;
       const dx = this.pos.x - other.x;
@@ -233,6 +246,11 @@ export class Player {
         const push = (4.4 - dist) / dist;
         this.pos.x += dx * push * 0.5;
         this.pos.z += dz * push * 0.5;
+        if (Math.abs(car.speed) > 5 && this.onCarBump
+          && (this._now - (other._lastBumpAt || -99)) > 2) {
+          other._lastBumpAt = this._now;
+          this.onCarBump(other, car.speed);
+        }
         car.speed *= 0.5;
       }
     }

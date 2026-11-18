@@ -61,5 +61,49 @@ export const CAM_DEFAULT_DIST = 8;
 // How many parked (stealable) cars the city holds.
 export const PARKED_CAR_COUNT = 8;
 
+// ---- Block B: traffic, peds, wanted / police (F6, F7, F8, F11). ----
+// Traffic: simple road-following cars on the centre-line grid.
+export const TRAFFIC_COUNT = 10;
+export const TRAFFIC_SPEED_MIN = 6;
+export const TRAFFIC_SPEED_MAX = 11;
+export const TRAFFIC_TURN_CHANCE = 0.25; // at an intersection, turn instead of going straight
+export const TRAFFIC_CAR_GAP = 8; // slow when a car ahead is closer than this
+export const TRAFFIC_STOP_GAP = 5; // full stop when a car ahead is closer than this
+export const LANE_OFFSET = 2.2; // right-hand lane offset from the road centre line
+
+// Pedestrians: one model, sidewalk wanderers that flee chaos.
+export const PED_COUNT = 20;
+export const PED_WALK_SPEED = 1.2;
+export const PED_FLEE_SPEED = 3.6;
+export const PED_FLEE_RADIUS = 12; // flee when chaos is closer than this
+export const PED_FLEE_TIME = 2.5;
+
+// Wanted: heat 0..100 maps to levels 0..3.
+export const HEAT_LEVEL_1 = 25;
+export const HEAT_LEVEL_2 = 50;
+export const HEAT_LEVEL_3 = 75;
+export const HEAT_STEAL = 35; // stealing a parked car
+export const HEAT_HIT_CAR = 15; // ramming another car
+export const HEAT_HIT_PED = 25; // running a pedestrian over
+export const HEAT_MELEE = 20; // punching a pedestrian (conditional feature)
+export const HEAT_DECAY_PER_SEC = 3; // after HEAT_QUIET_SECONDS without a crime
+export const HEAT_QUIET_SECONDS = 10;
+
+// Police pursuit: base top speed per wanted level (player max 28).
+export const POLICE_SPEED = { 1: 13, 2: 17, 3: 21 };
+export const POLICE_RUBBER_BAND = 10; // extra speed when far behind the player
+export const POLICE_SPAWN_DIST = 70; // spawn this far from the player, on a road
+export const POLICE_CATCH_DIST = 4; // within this for POLICE_CATCH_TIME = caught
+export const POLICE_CATCH_TIME = 2.5;
+export const POLICE_ROADBLOCK_DIST = 40; // roadblock placed this far ahead (level 3)
+
+// Player economy / health (HUD + caught fine).
+export const CASH_START = 120;
+export const FINE_CAUGHT = 50;
+export const HEALTH_START = 100;
+export const HEALTH_HIT_BY_CAR = 10; // traffic car hits Raka on foot
+export const HEALTH_HARD_CRASH = 5; // player car hits a wall hard
+export const HEALTH_REGEN_PER_SEC = 2;
+
 // Fixed seeds keep every shot and every fresh world identical.
 export const DEFAULT_SEED = 1;
