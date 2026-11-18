@@ -229,6 +229,17 @@ export class Police {
       const boost = Math.max(0, Math.min(POLICE_RUBBER_BAND, (distToPlayer - 25) * 0.25));
       let target = base + boost;
 
+      // Tail, don't ram: when the player is driving, hold a gap instead
+      // of grinding into them. A police car inside the ram radius halves
+      // the player's speed every step and wedges them against whatever
+      // they just hit — that is a bug, not a chase. When the player is
+      // stopped, close in: that is how the catch happens.
+      const playerSpeed = player.mode === 'car' ? Math.abs(player.speed) : 0;
+      if (player.mode === 'car' && playerSpeed > 2) {
+        if (distToPlayer < 5.5) target = 0;
+        else if (distToPlayer < 10) target = Math.min(target, playerSpeed);
+      }
+
       // Slow for the car ahead in the same lane.
       const fx = car.axis === 'z' ? 0 : car.dir;
       const fz = car.axis === 'z' ? car.dir : 0;

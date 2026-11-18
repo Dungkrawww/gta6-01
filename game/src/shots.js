@@ -52,12 +52,17 @@ export function runShot(game, shotName) {
 }
 
 // Chase shot (cover): Raka steals the north-facing Sirocco on Marina Ave
-// (avenue x = 42), rams a traffic car ahead on the same avenue — a real
-// collision, real heat, wanted level 2 — then cruises north while two
-// police cars close in from behind. Every step runs the real rules
-// (game.stepWorld); nothing is staged. Camera sits off to the side-behind
-// so the pursuing police cars are in the frame with the player's car,
-// the wanted stars, and the minimap.
+// (avenue x = 42), drives east along 42nd St, turns south and rams the
+// parked Citra on Coral Ave — a real collision, real heat, wanted level 2
+// — then keeps driving south past it while two police cars close in from
+// behind. Every step runs the real rules (game.stepWorld); nothing is
+// staged. The camera sits south-east of the player looking north-west,
+// so the player's car is seen front-three-quarter speeding south with
+// the pursuit visible behind it, plus the wanted stars and the minimap.
+// (The route is short — the ram lands ~7 s after the steal, inside the
+// 10 s quiet window, so heat is still 50 at the frame. A longer westward
+// route was tried and dropped: the drive took 12 s, heat decayed below
+// the level-2 threshold before the frame.)
 function runChaseShot(game) {
   const { player, input, hud, lights, camera, renderer, scene, traffic, police } = game;
   const avenueX = 42;
@@ -71,36 +76,100 @@ function runChaseShot(game) {
   player.mode = 'foot';
   player.speed = 0;
   player.figure.visible = true;
-  input.yaw = 0.7;
-  input.pitch = 0.32;
-  input.distance = 9;
+  // 3/4 rear camera: south-east of the player (yaw 0.6) looking
+  // north-west, so the car is seen front-three-quarter speeding west
+  // with the pursuit behind it up the road.
+  input.yaw = 0.6;
+  input.pitch = 0.4;
+  input.distance = 12;
 
   input._ePressed = true;
   game.stepWorld(STEP);
   if (player.mode !== 'car') throw new Error('chase shot: steal failed');
 
-  // Phase 2: ram a traffic car ahead on the same avenue. Aim at the
-  // nearest one (bang-bang steering toward its x), full throttle.
-  // Exits when the ram raises wanted to level 2, or after 300 steps.
-  let rammed = false;
-  for (let i = 0; i < 300 && !rammed; i++) {
-    if (police.level >= 2) { rammed = true; break; }
-    const ahead = traffic.getState()
-      .filter((c) => Math.abs(c.x - player.pos.x) < 4 && c.z < player.pos.z && player.pos.z - c.z < 80)
-      .sort((a, b) => b.z - a.z)[0];
-    const steer = ahead ? (ahead.x - player.pos.x > 1 ? 1 : ahead.x - player.pos.x < -1 ? -1 : 0) : 0;
-    input.setSynthetic(1, steer, false);
+  // Phase 2: waypoint drive (real driving, real rules) — north on Marina
+  // Ave to 42nd St, east along it to Coral Ave, south into the parked
+  // Citra. The Citra sits 1.6 m off the southbound lane, so the player
+  // cannot pass without hitting it: a real ram, real heat, wanted 2.
+  // The route is short (the ram lands ~7 s after the steal), so heat has
+  // not decayed below the level-2 threshold yet.
+  const waypoints = [
+    { x: 45.8, z: 42 },
+    { x: 134.2, z: 42 },
+    { x: 134.2, z: 58.5 },
+  ];
+  let wp = 0;
+  const wrapAngle = (a) => {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  };
+  for (let i = 0; i < 1500 && wp < waypoints.length; i++) {
+    const target = waypoints[wp];
+    const dx = target.x - player.pos.x;
+    const dz = target.z - player.pos.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 3) { wp += 1; continue; }
+    const desired = Math.atan2(dx, dz);
+    const err = wrapAngle(desired - player.heading);
+    const steer = err > 0.05 ? -1 : err < -0.05 ? 1 : 0;
+    let throttle = Math.abs(err) > 0.5 ? 0 : 1;
+    // Follow, don't ram: if a traffic car is ahead in our lane going our
+    // way, coast behind it instead of rear-ending it. Rear-ending adds
+    // heat (level 3 + roadblock) and the bump can shove the car off the
+    // road into a building. The Sirocco ram is the only ram we want.
+    if (throttle > 0) {
+      const fx = Math.sin(player.heading);
+      const fz = Math.cos(player.heading);
+      for (const t of traffic.getState()) {
+        const rx = t.x - player.pos.x;
+        const rz = t.z - player.pos.z;
+        const along = rx * fx + rz * fz;
+        if (along <= 0 || along > 12) continue;
+        const lat = Math.abs(rx * fz - rz * fx);
+        if (lat > 3) continue;
+        const tx2 = Math.sin(t.heading);
+        const tz2 = Math.cos(t.heading);
+        if (tx2 * fx + tz2 * fz < 0.2) continue;
+        throttle = 0;
+        break;
+      }
+    }
+    input.setSynthetic(throttle, steer, false);
     game.stepWorld(STEP);
   }
   if (police.level < 2) throw new Error(`chase shot: ram did not raise wanted to 2 (level ${police.level})`);
 
-  // Phase 3: cruise north for 8 seconds while the police close in.
-  // Pulsed throttle keeps the speed near 18 m/s so the pursuit (with
-  // rubber-banding) sits 10-20 m behind; lane-keep holds the avenue.
-  for (let i = 0; i < 480; i++) {
-    const throttle = (i % 5 < 3) ? 1 : 0;
-    const err = player.pos.x - avenueX;
-    const steer = err > 2 ? -1 : err < -2 ? 1 : 0;
+  // Phase 3: keep driving south past the rammed Citra for 1 s, then the
+  // frame. The east-biased target (x = 143 while still beside the Citra)
+  // steers the car around the Citra's east side instead of pushing
+  // through it; once past, it holds the avenue centre. 60 steps only:
+  // a stopped traffic car waits further south on this avenue, and the
+  // player rear-ends it around step 90 — the frame is taken while the
+  // player is still moving and the nearest police car is right on its
+  // tail.
+  for (let i = 0; i < 60; i++) {
+    const tx = player.pos.z < 64 ? 143 : 138;
+    const tz = player.pos.z + 40;
+    const desired = Math.atan2(tx - player.pos.x, tz - player.pos.z);
+    const err = wrapAngle(desired - player.heading);
+    const steer = err > 0.05 ? -1 : err < -0.05 ? 1 : 0;
+    let throttle = 1;
+    const fx = Math.sin(player.heading);
+    const fz = Math.cos(player.heading);
+    for (const t of traffic.getState()) {
+      const rx = t.x - player.pos.x;
+      const rz = t.z - player.pos.z;
+      const along = rx * fx + rz * fz;
+      if (along <= 0 || along > 12) continue;
+      const lat = Math.abs(rx * fz - rz * fx);
+      if (lat > 3) continue;
+      const tx2 = Math.sin(t.heading);
+      const tz2 = Math.cos(t.heading);
+      if (tx2 * fx + tz2 * fz < 0.2) continue;
+      throttle = 0;
+      break;
+    }
     input.setSynthetic(throttle, steer, false);
     game.stepWorld(STEP);
   }

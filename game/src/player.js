@@ -240,24 +240,35 @@ export class Player {
     const hitWall = resolveCircleCollision(this.pos, CAR_RADIUS, this.city.colliders);
     car._hitWall = hitWall;
     if (hitWall) car.speed *= 0.4;
-    // Bump into other parked cars (circles, cheap and good enough).
+    // Bump into other parked cars. Oriented (rectangle) check: the cars
+    // are 4.3 m long and 1.9 m wide. A circle radius of 4.4 m falsely
+    // "rams" cars passing in the adjacent lane (lanes are 4.4 m apart) —
+    // every oncoming car counted as a collision, piling heat to level 3
+    // and shoving the player off the road. Check the offset in the driven
+    // car's frame instead: collide only if the other car is within 4.2 m
+    // ahead/behind AND 1.9 m to the side.
     // A hard bump is a crime, reported at most once per car per 2 s.
     for (const other of this.cars) {
       if (other === car) continue;
-      const dx = this.pos.x - other.x;
-      const dz = this.pos.z - other.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist < 4.4 && dist > 0.01) {
-        const push = (4.4 - dist) / dist;
-        this.pos.x += dx * push * 0.5;
-        this.pos.z += dz * push * 0.5;
-        if (Math.abs(car.speed) > 5 && this.onCarBump
-          && (this._now - (other._lastBumpAt || -99)) > 2) {
-          other._lastBumpAt = this._now;
-          this.onCarBump(other, car.speed);
-        }
-        car.speed *= 0.5;
+      const fx = Math.sin(car.heading);
+      const fz = Math.cos(car.heading);
+      const rx = other.x - this.pos.x;
+      const rz = other.z - this.pos.z;
+      const fwd = rx * fx + rz * fz;
+      const lat = rx * fz - rz * fx;
+      if (Math.abs(fwd) >= 4.2 || Math.abs(lat) >= 1.9) continue;
+      // Push out along the axis of least penetration: back along the
+      // forward axis, sideways away from the other car.
+      const fwdPush = (4.2 - Math.abs(fwd)) * 0.5 * (fwd > 0 ? -1 : 1);
+      const latPush = (1.9 - Math.abs(lat)) * 0.5 * (lat > 0 ? 1 : -1);
+      this.pos.x += fx * fwdPush + (-fz) * latPush;
+      this.pos.z += fz * fwdPush + fx * latPush;
+      if (Math.abs(car.speed) > 5 && this.onCarBump
+        && (this._now - (other._lastBumpAt || -99)) > 2) {
+        other._lastBumpAt = this._now;
+        this.onCarBump(other, car.speed);
       }
+      car.speed *= 0.5;
     }
     clampToBounds(this.pos);
     car.x = this.pos.x;

@@ -147,6 +147,8 @@ export class Traffic {
     }
 
     // Pairwise anti-pileup: two cars too close — the slower one waits.
+    // Only when the other car is moving: two stopped cars must both be
+    // allowed to go, or they deadlock each other forever.
     for (let i = 0; i < this.cars.length; i++) {
       for (let j = i + 1; j < this.cars.length; j++) {
         const a = this.cars[i];
@@ -157,7 +159,8 @@ export class Traffic {
         const dz = pa.z - pb.z;
         if (dx * dx + dz * dz < 3.5 * 3.5) {
           const slower = a.speed <= b.speed ? a : b;
-          slower.blockedUntil = ctx.now + 0.6;
+          const faster = slower === a ? b : a;
+          if (faster.speed > 0.5) slower.blockedUntil = ctx.now + 0.6;
         }
       }
     }

@@ -130,7 +130,9 @@ export class Peds {
         }
       }
 
-      // Walk toward the target; wait if a car is close on a road crossing.
+      // Walk toward the target. On a road with a car close by, hurry
+      // across instead of waiting: waiting forever while the car waits
+      // for the pedestrian is a deadlock (both stop, neither moves).
       const dx = ped.targetX - ped.x;
       const dz = ped.targetZ - ped.z;
       const dist = Math.hypot(dx, dz);
@@ -138,25 +140,21 @@ export class Peds {
         this._pickTarget(ped);
         ped.speed = 0;
       } else {
-        let wait = false;
+        let hurry = false;
         if (this._onRoad(ped.x, ped.z) && ctx.cars) {
           for (const car of ctx.cars) {
             const cd = Math.hypot(car.x - ped.x, car.z - ped.z);
-            if (cd < 6) { wait = true; break; }
+            if (cd < 8) { hurry = true; break; }
           }
         }
-        if (wait) {
-          ped.speed = 0;
-        } else {
-          ped.heading = Math.atan2(dx / dist, dz / dist);
-          ped.speed = PED_WALK_SPEED;
-          pos.x += (dx / dist) * ped.speed * dt;
-          pos.z += (dz / dist) * ped.speed * dt;
-          ped.walkPhase += ped.speed * dt * 2.4;
-          resolveCircleCollision(pos, 0.45, this.city.colliders);
-          ped.x = pos.x;
-          ped.z = pos.z;
-        }
+        ped.heading = Math.atan2(dx / dist, dz / dist);
+        ped.speed = hurry ? PED_FLEE_SPEED : PED_WALK_SPEED;
+        pos.x += (dx / dist) * ped.speed * dt;
+        pos.z += (dz / dist) * ped.speed * dt;
+        ped.walkPhase += ped.speed * dt * 2.4;
+        resolveCircleCollision(pos, 0.45, this.city.colliders);
+        ped.x = pos.x;
+        ped.z = pos.z;
       }
     }
     this._syncMeshes();

@@ -126,21 +126,26 @@ function checkCollisions(dt, now, prevSpeed) {
       }
     }
     // Ram another car: bounce off it, lose speed; traffic rams are crimes.
+    // Oriented (rectangle) check — see player.js: a 4.4 m circle falsely
+    // "rams" cars passing in the adjacent lane (lanes are 4.4 m apart).
     const ram = (ox, oz, isTrafficCar, carObj) => {
-      const dx = px - ox;
-      const dz = pz - oz;
-      const dist = Math.hypot(dx, dz);
-      if (dist < 4.4 && dist > 0.01) {
-        const push = (4.4 - dist) / dist;
-        player.pos.x += dx * push * 0.5;
-        player.pos.z += dz * push * 0.5;
-        if (speed > 5 && isTrafficCar && carObj
-          && (now - (carObj._lastBumpAt || -99)) > 2) {
-          carObj._lastBumpAt = now;
-          police.addHeat(HEAT_HIT_CAR, now);
-        }
-        if (player.drivenCar) player.drivenCar.speed *= 0.5;
+      const fx = Math.sin(player.heading);
+      const fz = Math.cos(player.heading);
+      const rx = ox - px;
+      const rz = oz - pz;
+      const fwd = rx * fx + rz * fz;
+      const lat = rx * fz - rz * fx;
+      if (Math.abs(fwd) >= 4.2 || Math.abs(lat) >= 1.9) return;
+      const fwdPush = (4.2 - Math.abs(fwd)) * 0.5 * (fwd > 0 ? -1 : 1);
+      const latPush = (1.9 - Math.abs(lat)) * 0.5 * (lat > 0 ? 1 : -1);
+      player.pos.x += fx * fwdPush + (-fz) * latPush;
+      player.pos.z += fz * fwdPush + fx * latPush;
+      if (speed > 5 && isTrafficCar && carObj
+        && (now - (carObj._lastBumpAt || -99)) > 2) {
+        carObj._lastBumpAt = now;
+        police.addHeat(HEAT_HIT_CAR, now);
       }
+      if (player.drivenCar) player.drivenCar.speed *= 0.5;
     };
     for (const car of traffic.cars) {
       const p = traffic.posOf(car);
@@ -148,7 +153,7 @@ function checkCollisions(dt, now, prevSpeed) {
     }
     for (const car of police.cars) {
       const p = { x: car.mesh.position.x, z: car.mesh.position.z };
-      ram(p.x, p.z, false, null);
+      ram(p.x, p.z, true, car);
     }
     for (const car of police.roadblock) ram(car.x, car.z, false, null);
     // Hard wall crash costs health.

@@ -51,7 +51,11 @@ export const CAR_MAX_SPEED = 28.0;
 export const CAR_MAX_REVERSE = 8.0;
 export const CAR_STEER_MAX = 0.55;
 export const CAR_RADIUS = 1.7;
-export const CAR_DRAG = 0.6;
+// Drag caps the top speed: accel/drag = 9/0.35 ≈ 25.7 m/s, just under
+// CAR_MAX_SPEED. (Block A had 0.6, which capped the car at 15 m/s —
+// slower than the police pursuit speeds, so Raka could never escape.
+// Fixed in Block B; verified by the combined playtest.)
+export const CAR_DRAG = 0.35;
 
 // Camera.
 export const CAM_MIN_DIST = 4;
@@ -93,7 +97,10 @@ export const HEAT_QUIET_SECONDS = 10;
 export const POLICE_SPEED = { 1: 13, 2: 17, 3: 21 };
 export const POLICE_RUBBER_BAND = 10; // extra speed when far behind the player
 export const POLICE_SPAWN_DIST = 70; // spawn this far from the player, on a road
-export const POLICE_CATCH_DIST = 4; // within this for POLICE_CATCH_TIME = caught
+// Catch range must exceed the car-ram push distance (4.4 m): a police car
+// grinding head-on into the player sits at ~4.4 m, so a smaller range
+// could never trigger the catch. (Block B fix after the chase debug.)
+export const POLICE_CATCH_DIST = 5.5; // within this for POLICE_CATCH_TIME = caught
 export const POLICE_CATCH_TIME = 2.5;
 export const POLICE_ROADBLOCK_DIST = 40; // roadblock placed this far ahead (level 3)
 
